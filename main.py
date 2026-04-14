@@ -97,7 +97,15 @@ def debug_bore(rn: str, x_api_key: Optional[str] = Header(None)):
                     text += p.extract_text() or ""
                 info["pages"] = len(reader.pages)
                 info["text_length"] = len(text)
-                info["text_preview"] = text[:600]
+                info["text_full"] = text
+                # Try the actual lookup parsing on this text
+                import re
+                STRATA = re.compile(r"^\s*\d+\s+([\d.]+)\s+([\d.]+)\s+(.+?)$", re.MULTILINE)
+                strata = STRATA.findall(text)
+                info["strata_rows_found"] = len(strata)
+                if strata:
+                    info["strata_first"] = strata[0]
+                    info["strata_max_depth"] = max(float(b) for _, b, _ in strata if float(b) > 0)
             except Exception as e:
                 info["pdf_parse_error"] = f"{type(e).__name__}: {e}"
         return info
