@@ -153,6 +153,10 @@ def haversine_km(lat1, lng1, lat2, lng2):
     return 2 * R * math.asin(math.sqrt(a))
 
 
+def _log(msg):
+    print(f"[bore-lookup] {msg}", flush=True)
+
+
 def query_nearby_bores(lat, lng, radius_km=10, max_bores=10):
     """
     Bbox query around (lat, lng). Returns list of dicts sorted by distance:
@@ -184,8 +188,9 @@ def query_nearby_bores(lat, lng, radius_km=10, max_bores=10):
             resp = requests.get(ARCGIS_QUERY, params=params, timeout=30)
             resp.raise_for_status()
             features = resp.json().get("features", [])
+            _log(f"arcgis radius={r_km}km features={len(features)}")
         except Exception as e:
-            print(f"  [arcgis error] radius {r_km}km: {e}", file=sys.stderr)
+            _log(f"arcgis ERROR radius={r_km}km: {e}")
             features = []
 
         bores = []
@@ -265,6 +270,7 @@ def fetch_bore_report(rn):
     try:
         r = requests.get(url, timeout=30)
         if not r.ok or len(r.content) < 500:
+            _log(f"bore-report rn={rn} status={r.status_code} len={len(r.content)}")
             cache[key] = None
             _save(BORE_CACHE, cache)
             return None
@@ -273,8 +279,13 @@ def fetch_bore_report(rn):
         for page in reader.pages:
             text += page.extract_text() or ""
     except Exception as e:
-        with PARSE_FAILURES.open("a", encoding="utf-8") as f:
-            f.write(f"{rn}\tfetch_error\t{e}\n")
+        _log(f"bore-report rn={rn} fetch/parse_error: {type(e).__name__}: {e}")
+        try:
+            PARSE_FAILURES.parent.mkdir(parents=True, exist_ok=True)
+            with PARSE_FAILURES.open("a", encoding="utf-8") as f:
+                f.write(f"{rn}\tfetch_error\t{e}\n")
+        except Exception:
+            pass
         cache[key] = None
         _save(BORE_CACHE, cache)
         return None
@@ -315,8 +326,13 @@ def fetch_bore_report(rn):
         drilled_date = dd.group(1)
 
     if depth is None and aquifer_name is None:
-        with PARSE_FAILURES.open("a", encoding="utf-8") as f:
-            f.write(f"{rn}\tno_data_extracted\n")
+        _log(f"bore-report rn={rn} no_data_extracted text_len={len(text)}")
+        try:
+            PARSE_FAILURES.parent.mkdir(parents=True, exist_ok=True)
+            with PARSE_FAILURES.open("a", encoding="utf-8") as f:
+                f.write(f"{rn}\tno_data_extracted\n")
+        except Exception:
+            pass
         cache[key] = None
         _save(BORE_CACHE, cache)
         return None
