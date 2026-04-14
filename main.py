@@ -71,6 +71,40 @@ def healthz():
     return {"status": "ok"}
 
 
+@app.get("/debug/bore/{rn}")
+def debug_bore(rn: str, x_api_key: Optional[str] = Header(None)):
+    """Fetch one bore report and return raw diagnostic info."""
+    if API_KEY and x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="invalid or missing X-API-Key")
+    import io
+    import requests
+    url = bdl.BORE_REPORT_URL.format(rn=rn)
+    try:
+        r = requests.get(url, timeout=30)
+        info = {
+            "url": url,
+            "status_code": r.status_code,
+            "content_length": len(r.content),
+            "content_type": r.headers.get("content-type", "?"),
+            "first_bytes_hex": r.content[:32].hex() if r.content else None,
+        }
+        if r.ok and len(r.content) >= 500:
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(r.content))
+                text = ""
+                for p in reader.pages:
+                    text += p.extract_text() or ""
+                info["pages"] = len(reader.pages)
+                info["text_length"] = len(text)
+                info["text_preview"] = text[:600]
+            except Exception as e:
+                info["pdf_parse_error"] = f"{type(e).__name__}: {e}"
+        return info
+    except Exception as e:
+        return {"url": url, "error": f"{type(e).__name__}: {e}"}
+
+
 @app.post("/lookup", response_model=LookupResponse)
 def lookup(req: LookupRequest, x_api_key: Optional[str] = Header(None)):
     if API_KEY and x_api_key != API_KEY:
