@@ -290,35 +290,58 @@ def fetch_bore_report(rn):
         _save(BORE_CACHE, cache)
         return None
 
-    # Drilled depth = max bottom of strata log
-    depths = [float(b) for _, b, _ in STRATA_ROW.findall(text) if float(b) > 0]
-    depth = max(depths) if depths else None
+    # Drilled depth = max decimal in the Strata Logs section.
+    # pypdf output varies — sometimes "1 0.00 7.00 BROWN CLAY", sometimes
+    # "10.00 7.00BROWN CLAY" with no spaces. Format-agnostic: scan the
+    # strata block for all DD.DD numbers and take the max (drilled depth).
+    depth = None
+    strata_section = re.search(
+        r"Strata\s*Logs.*?(?=Stratigraphies|Aquifers|Pump|Bore Conditions|Elevations|Water Analysis|Water Levels|$)",
+        text, re.S,
+    )
+    if strata_section:
+        nums = [float(m) for m in re.findall(r"\d+\.\d{2}", strata_section.group(0))]
+        # Filter out implausible (>3000m bores don't exist; filters dates/lat/lng noise)
+        plausible = [n for n in nums if 0 < n <= 2000]
+        if plausible:
+            depth = max(plausible)
+    # Fallback: also try the structured row regex (works on local pypdf)
+    if depth is None:
+        depths = [float(b) for _, b, _ in STRATA_ROW.findall(text) if float(b) > 0]
+        if depths:
+            depth = max(depths)
 
-    # Aquifer block
+    # Aquifer: scan whole text for known formation names (most robust to
+    # pypdf format variations). The formation name appears in CAPS in the
+    # Aquifers section.
     aquifer_name, swl, yield_lps = None, None, None
+    text_upper = text.upper()
+    for fmt in KNOWN_AQUIFERS:
+        if fmt.upper() in text_upper:
+            aquifer_name = fmt
+            break
+
+    # Try to extract SWL + yield from Aquifers block (best effort, may miss)
     aq_section = re.search(
-        r"Aquifers.*?(?=Pump.Tests|Bore Conditions|Elevations|Water Analysis|$)",
+        r"Aquifers.*?(?=Pump|Bore Conditions|Elevations|Water Analysis|Water Levels|$)",
         text, re.S,
     )
     if aq_section:
+        # SWL: negative-prefixed decimal in the aquifer block
+        swl_m = re.search(r"-(\d+\.\d{2})", aq_section.group(0))
+        if swl_m:
+            try:
+                swl = -float(swl_m.group(1))
+            except ValueError:
+                pass
+        # Try structured row regex for yield (may not match new format)
         for m in AQUIFER_ROW.finditer(aq_section.group(0)):
             try:
-                top, swl_v, yld_v, name = m.groups()
-                if not aquifer_name:
-                    aquifer_name = name.strip().title()
-                    if swl_v:
-                        swl = float(swl_v)
-                    yield_lps = float(yld_v)
+                _, _, yld_v, _ = m.groups()
+                yield_lps = float(yld_v)
+                break
             except Exception:
                 continue
-
-    # Fallback: scan whole text for known formation names
-    if not aquifer_name:
-        text_upper = text.upper()
-        for fmt in KNOWN_AQUIFERS:
-            if fmt.upper() in text_upper:
-                aquifer_name = fmt
-                break
 
     drilled_date = None
     dd = re.search(r"Drilled Date.*?(\d{2}/\d{2}/\d{4})", text)
